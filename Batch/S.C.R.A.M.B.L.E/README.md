@@ -1,4 +1,5 @@
 # Unit S.C.R.A.M.B.L.E.
+# !Ve vívoji!
 
 **Blokuje kognitivní hazard ve vašem PC.**
 
@@ -11,12 +12,6 @@ Unit S.C.R.A.M.B.L.E. je unikátní open-source projekt navržený k prevenci n�
 * **Logování aktivit:** Podrobný záznam detekovaných hrozeb a provedených akcí pro transparentnost a kontrolu.
 * **Minimální dopad na výkon:** Aplikace je navržena tak, aby běžela nenápadně na pozadí s minimálním zatížením systémových prostředků.
 * **Open-source:** Celý kód je otevřený pro komunitní audit a vylepšení.
-
-## Instalace (Windows)
-
-[Stiahnuť inštalačný súbor (installer.exe)](https://github.com/mimrpim/SCRABMLE/raw/main/installer/installer.exe)
-
-*Poznámka: Momentálně je k dispozici pouze instalační soubor pro Windows.*
 
 ## Použití
 
