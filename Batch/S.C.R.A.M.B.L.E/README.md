@@ -7,6 +7,8 @@ Unit S.C.R.A.M.B.L.E. je unikátní open-source projekt navržený k prevenci n�
 
 ## Funkce
 
+# BLOKUJE MICROSOFT EDGE
+
 * **Proaktivní detekce:** Inteligentní algoritmy analyzují obsah v reálném čase a identifikují potenciální kognitivní hrozby.
 * **Konfigurovatelné filtry:** Uživatelé mohou přizpůsobit úroveň citlivosti a definovat vlastní pravidla filtrování.
 * **Logování aktivit:** Podrobný záznam detekovaných hrozeb a provedených akcí pro transparentnost a kontrolu.
