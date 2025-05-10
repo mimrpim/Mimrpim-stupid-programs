@@ -1,0 +1,37 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
+  <style>
+    /* Define CSS variables for easier customization */
+    :root {
+      --aetherus-color-1: #6200ea;  /* Purple */
+      --aetherus-color-2: #00b0ff;  /* Blue */
+      --aetherus-color-3: #ffffff;  /* White */
+    }
+
+    .aetherus-bg {
+      fill: var(--aetherus-color-1);
+    }
+
+    .aetherus-symbol {
+      fill: var(--aetherus-color-3);
+    }
+
+    .aetherus-link {
+      stroke: var(--aetherus-color-2);
+      stroke-width: 4;
+      stroke-linecap: round;
+      stroke-linejoin: round;
+      fill: none;
+    }
+  </style>
+  <circle class="aetherus-bg" cx="50" cy="50" r="45"/>
+  <g>
+    <path class="aetherus-link" d="M30,50 H40"/>
+    <path class="aetherus-link" d="M60,50 H70"/>
+    <path class="aetherus-link" d="M50,30 V40"/>
+    <path class="aetherus-link" d="M50,60 V70"/>
+    <path class="aetherus-link" d="M35,35 L42,42"/>
+    <path class="aetherus-link" d="M58,58 L65,65"/>
+    <path class="aetherus-link" d="M65,35 L58,42"/>
+    <path class="aetherus-link" d="M42,58 L35,65"/>
+  </g>
+</svg>
