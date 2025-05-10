@@ -1,149 +1,358 @@
+import tkinter as tk
+from tkinter import scrolledtext, messagebox, Menu
 import socket
 import threading
+from PIL import Image, ImageTk
+import json
+import os
 
-HOST = '0.0.0.0'  # Naslouchá na všech dostupných rozhraních
-PORT = 12345
-clients = {}  # Slovník pro ukládání klientů (IP: (nickname, socket))
-DEBUG = True  # Debugování je na serveru vždy zapnuté
+CONFIG_FILE = "server_config.json"
 
-def debug_print(message):
-    if DEBUG:
-        print(message)
+class ChatServerGUI:
+    def __init__(self, master):
+        self.master = master
+        master.title("Aetherus Server")
+        self.server_socket = None
+        self.clients = {}
+        self.nicknames = {}
+        self.debug_enabled = tk.BooleanVar()
+        self.debug_enabled.set(False)
+        self.running = False
+        self.current_theme = "light"
+        self.theme_var = tk.StringVar()
 
-def broadcast(message, sender_socket):
-    for ip, (nick, client) in clients.items():
-        if client != sender_socket:
-            try:
-                client.send(message)
-            except:
-                # Pokud se nepodaří odeslat (odpojený klient), můžeme ho odstranit
-                pass
+        self._load_config()
+        self._create_menu()  # Call _create_menu first
+        self._create_widgets()
+        self._set_theme(self.current_theme)
+        self._load_icon()
 
-def send_private_message(sender_nick, recipient_nick, message):
-    debug_print(f"Server: Pokus o odeslání soukromé zprávy od '{sender_nick}' pro '{recipient_nick}': '{message}'")
-    recipient_socket = None
-    for ip, (nick, sock) in clients.items():
-        debug_print(f"Server: Kontroluji uživatele '{nick}' s IP '{ip}'")
-        if nick == recipient_nick:
-            recipient_socket = sock
-            debug_print(f"Server: Našel příjemce '{nick}' - socket: {recipient_socket}")
-            break
+        master.protocol("WM_DELETE_WINDOW", self._on_closing)
 
-    if recipient_socket:
+    def _create_menu(self):
+        self.menubar = Menu(self.master)  # Store the menu bar
+        debugmenu = Menu(self.menubar, tearoff=0)
+        debugmenu.add_checkbutton(label="Debug", variable=self.debug_enabled)
+
+        thememenu = Menu(debugmenu, tearoff=0)
+        self.theme_var.set(self.current_theme)
+        thememenu.add_radiobutton(label="Světlý", variable=self.theme_var, value="light", command=self._on_theme_change)
+        thememenu.add_radiobutton(label="Tmavý", variable=self.theme_var, value="dark", command=self._on_theme_change)
+        debugmenu.add_cascade(label="Motiv", menu=thememenu)
+
+        self.menubar.add_cascade(label="Nastavení", menu=debugmenu)
+        self.master.config(menu=self.menubar)  # Use self.menubar
+
+    def _debug_print(self, message):
+        if self.debug_enabled.get():
+            print(f"(DEBUG): {message}")
+
+    def _create_widgets(self):
+        self.notebook = tk.Frame(self.master)
+
+        self.server_frame = tk.Frame(self.notebook)
+        self.server_frame_label = tk.LabelFrame(self.notebook, text="Server")
+        self.server_frame_label.pack(in_=self.notebook, side=tk.LEFT, padx=10, pady=10, fill=tk.BOTH, expand=True)
+
+        self.log_frame = tk.Frame(self.notebook)
+        self.log_frame_label = tk.LabelFrame(self.notebook, text="Log")
+        self.log_frame_label.pack(in_=self.notebook, side=tk.RIGHT, padx=10, pady=10, fill=tk.BOTH, expand=True)
+
+        self.notebook.pack(fill=tk.BOTH, expand=True)
+
+        self.ip_label = tk.Label(self.server_frame_label, text="IP Adresa:")
+        self.ip_label.pack(anchor=tk.W)
+        self.ip_entry = tk.Entry(self.server_frame_label, width=30)
+        self.ip_entry.pack(anchor=tk.W)
+        self.ip_entry.insert(0, "0.0.0.0")
+
+        self.port_label = tk.Label(self.server_frame_label, text="Port:")
+        self.port_label.pack(anchor=tk.W)
+        self.port_entry = tk.Entry(self.server_frame_label, width=10)
+        self.port_entry.pack(anchor=tk.W)
+        self.port_entry.insert(0, "2555")
+
+        self.start_stop_button = tk.Button(self.server_frame_label, text="Spustit Server", command=self._start_server)
+        self.start_stop_button.pack(pady=5, anchor=tk.W)
+
+        self.debug_check = tk.Checkbutton(self.server_frame_label, text="Debug", variable=self.debug_enabled, command=self._toggle_debug)
+        self.debug_check.pack(anchor=tk.W)
+
+        self.log_area = scrolledtext.ScrolledText(self.log_frame_label, state=tk.DISABLED, height=10)
+        self.log_area.pack(fill=tk.BOTH, expand=True)
+
+    def _load_icon(self):
+        """Načte a nastaví ikonu okna z PNG souboru."""
         try:
-            recipient_socket.send(f"(Soukromá zpráva od {sender_nick}): {message}\n".encode('utf-8'))
-            debug_print(f"Server: Soukromá zpráva odeslána na {recipient_nick}")
-        except:
-            debug_print(f"Server: Chyba při odesílání soukromé zprávy na {recipient_nick}")
-            pass # Příjemce mohl být odpojen
-    else:
-        sender_socket = clients.get(get_ip_by_nickname(sender_nick), (None, None))[1]
-        if sender_socket:
-            sender_socket.send(f"Server: Uživatel '{recipient_nick}' není online.\n".encode('utf-8'))
-            debug_print(f"Server: Uživatel '{recipient_nick}' není online")
+            img = Image.open("icon.png")
+            self.icon_image = ImageTk.PhotoImage(img)
+            self.master.iconphoto(True, self.icon_image)
 
-def send_online_users():
-    online_users = "§" + "\n".join(nick for ip, (nick, sock) in clients.items())
-    debug_print(f"Server: Odesílám online uživatele (označené): '{online_users}'")
-    for ip, (nick, client) in clients.items():
+        except FileNotFoundError:
+            print("Soubor icon.png nebyl nalezen. Ujistěte se, že je ve stejném adresáři jako skript.")
+
+    def _display_log(self, message):
+        """Zobrazí zprávu v logovacím okně."""
+        self.log_area.config(state=tk.NORMAL)
+        self.log_area.insert(tk.END, message + "\n")
+        self.log_area.config(state=tk.DISABLED)
+        self.log_area.see(tk.END)
+
+    def _start_server(self):
+        """Spustí server naslouchající na zadané IP adrese a portu."""
+        if self.running:
+            self._stop_server()
+            return
+
+        self.ip_address = self.ip_entry.get()
+        self.port = int(self.port_entry.get())
+
+        if not self.ip_address:
+            messagebox.showerror("Chyba", "Musíte zadat IP adresu serveru.")
+            return
+        if not self.port:
+            messagebox.showerror("Chyba", "Musíte zadat port serveru.")
+            return
+
         try:
-            client.send(online_users.encode('utf-8'))
-        except:
-            pass
+            self.server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            self.server_socket.bind((self.ip_address, self.port))
+            self.server_socket.listen(5)
+            self._display_log(f"Server spuštěn na {self.ip_address}:{self.port}")
+            self.running = True
+            self.start_stop_button.config(text="Zastavit Server")
+            threading.Thread(target=self._accept_clients, daemon=True).start()
+        except Exception as e:
+            messagebox.showerror("Chyba", f"Nepodařilo se spustit server: {e}")
+            self._display_log(f"Chyba při spouštění serveru: {e}")
+            self.server_socket = None
 
-def get_ip_by_nickname(nickname):
-    for ip, (nick, sock) in clients.items():
-        if nick == nickname:
-            return ip
-    return None
+    def _stop_server(self):
+        """Zastaví server a odpojí všechny klienty."""
+        if not self.running:
+            return
 
-def handle_client(client_socket, client_address):
-    global clients
-    global broadcast
-    global send_online_users
-    global send_private_message
+        self._display_log("Zastavuji server...")
+        self.running = False
+        self.start_stop_button.config(text="Spustit Server")
 
-    ip_address = client_address[0]
-    nickname = None
-
-    try:
-        # První připojení - získání nickname
-        if ip_address not in clients:
-            client_socket.send("NICK".encode('utf-8'))
-            nickname = client_socket.recv(1024).decode('utf-8').strip()
-            if nickname:
-                clients[ip_address] = (nickname, client_socket)
-                debug_print(f"Uživatel {nickname} ({ip_address}) se připojil.")
-                broadcast(f"Server: Uživatel {nickname} se připojil.\n".encode('utf-8'), client_socket)
-                send_online_users()
-            else:
-                debug_print(f"Připojení od {ip_address} ukončeno (chybný nickname).")
-                client_socket.close()
-                return
-        else:
-            # Klient se připojuje znovu - získá nový nickname
-            client_socket.send("NICK".encode('utf-8'))
-            new_nickname = client_socket.recv(1024).decode('utf-8').strip()
-            if new_nickname:
-                old_nickname, _ = clients[ip_address]
-                clients[ip_address] = (new_nickname, client_socket)
-                debug_print(f"Uživatel s IP {ip_address} změnil nickname z '{old_nickname}' na '{new_nickname}'.")
-                broadcast(f"Server: Uživatel '{old_nickname}' se nyní jmenuje '{new_nickname}'.\n".encode('utf-8'), client_socket)
-                send_online_users()
-            else:
-                debug_print(f"Připojení od {ip_address} ukončeno (chybný nový nickname).")
-                client_socket.close()
-                return
-
-        # Komunikace s klientem
-        while True:
+        for client_socket in self.clients:
             try:
-                message = client_socket.recv(1024).decode('utf-8')
-                if not message:
-                    break
+                client_socket.shutdown(socket.SHUT_RDWR)
+                client_socket.close()
+            except Exception as e:
+                self._display_log(f"Chyba při odpojování klienta: {e}")
+        self.clients.clear()
+        self.nicknames.clear()
 
-                # Získání aktuálního nickname pro tuto IP adresu
-                current_nickname = clients.get(ip_address, ('Neznámý',))[0]
+        if self.server_socket:
+            try:
+                self.server_socket.close()
+            except Exception as e:
+                self._display_log(f"Chyba při zavírání serverového socketu: {e}")
+            self.server_socket = None
+        self._display_log("Server zastaven.")
 
-                # Zpracování zprávy ve formátu "PRIJEMCE: ZPRAVA"
-                if ":" in message:
-                    recipient_nick, content = message.split(":", 1)
-                    send_private_message(current_nickname, recipient_nick.strip(), content.strip())
-                else:
-                    debug_print(f"{current_nickname}: {message}")
-                    broadcast(f"{current_nickname}: {message}\n".encode('utf-8'), client_socket)
-            except ConnectionResetError:
+    def _accept_clients(self):
+        """Akceptuje příchozí připojení od klientů."""
+        while self.running:
+            try:
+                client_socket, client_address = self.server_socket.accept()
+                self._display_log(f"Připojil se klient: {client_address}")
+                self.clients[client_socket] = client_address
+                threading.Thread(target=self._handle_client, args=(client_socket,), daemon=True).start()
+            except OSError:
+                if self.running:
+                    self._display_log("Chyba při akceptování klienta (server socket je pravděpodobně zavřený).")
                 break
             except Exception as e:
-                debug_print(f"Chyba při komunikaci s {clients.get(ip_address, ('Neznámý',))[0]} ({ip_address}): {e}")
+                self._display_log(f"Chyba při akceptování klienta: {e}")
                 break
 
-    finally:
-        if ip_address in clients:
-            disconnected_nickname = clients[ip_address][0]
-            del clients[ip_address]
-            debug_print(f"Uživatel {disconnected_nickname} ({ip_address}) se odpojil.")
-            broadcast(f"Server: Uživatel {disconnected_nickname} se odpojil.\n".encode('utf-8'), None)
-            send_online_users()
-        client_socket.close()
+    def _handle_client(self, client_socket):
+        """Obsluhuje komunikaci s připojeným klientem."""
+        try:
+            nickname = client_socket.recv(1024).decode('utf-8').strip()
+            if not nickname:
+                self._display_log(f"Klient {self.clients[client_socket]} se nepředstavil, odpojuji.")
+                self._remove_client(client_socket)
+                return
 
-def main():
-    server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    try:
-        server_socket.bind((HOST, PORT))
-        server_socket.listen()
-        print(f"Server naslouchá na {HOST}:{PORT}...")
+            if nickname in self.nicknames.values():
+                self._display_log(f"Klient {self.clients[client_socket]} má duplicitní nickname '{nickname}', odpojuji.")
+                client_socket.send("ERROR: Nickname je již používán.".encode('utf-8'))
+                self._remove_client(client_socket)
+                return
 
-        while True:
-            client_socket, client_address = server_socket.accept()
-            print(f"Připojení od {client_address}")
-            client_thread = threading.Thread(target=handle_client, args=(client_socket, client_address))
-            client_thread.start()
-    except socket.error as e:
-        print(f"Chyba serveru: {e}")
-    finally:
-        if 'server_socket' in locals():
-            server_socket.close()
+            self.nicknames[client_socket] = nickname
+            self._display_log(f"Klient {self.clients[client_socket]} se představil jako '{nickname}'.")
+            self._send_user_list_to_all()
+
+            while self.running:
+                try:
+                    message = client_socket.recv(1024).decode('utf-8')
+                    if not message:
+                        self._display_log(f"Klient {self.clients[client_socket]} se odpojil.")
+                        self._remove_client(client_socket)
+                        break
+
+                    if message.lower() == "/list":
+                        user_list = "\n".join(self.nicknames.values())
+                        self._display_log(f"Klient {self.clients[client_socket]} requested user list: {user_list}")
+                        client_socket.send(f"Online uživatelé:\n{user_list}".encode('utf-8'))
+                    elif message.lower() == "/cls":
+                        self._display_log(f"Klient {self.clients[client_socket]} vymazal chat.")
+                        self._send_message_to_all("/cls")
+                    elif message.startswith("@"):
+                        self._handle_private_message(client_socket, message)
+                    else:
+                        self._display_log(f"Přijato od {self.nicknames[client_socket]} ({self.clients[client_socket]}): {message}")
+                        self._send_message_to_all(f"{self.nicknames[client_socket]}: {message}")
+                except ConnectionResetError:
+                    self._display_log(f"Klient {self.clients[client_socket]} se nečekaně odpojil.")
+                    self._remove_client(client_socket)
+                    break
+                except Exception as e:
+                    self._display_log(f"Chyba při komunikaci s klientem {self.clients[client_socket]}: {e}")
+                    self._remove_client(client_socket)
+                    break
+        except Exception as e:
+            self._display_log(f"Chyba při obsluze klienta {self.clients.get(client_socket, 'Neznámý')}: {e}")
+            self._remove_client(client_socket)
+
+    def _handle_private_message(self, client_socket, message):
+        """Obslouží soukromou zprávu."""
+        parts = message.split(" ", 1)
+        if len(parts) > 1:
+            recipient_nick = parts[0][1:]
+            content = parts[1]
+            recipient_socket = None
+            for sock, nick in self.nicknames.items():
+                if nick == recipient_nick:
+                    recipient_socket = sock
+                    break
+            if recipient_socket:
+                sender_nick = self.nicknames[client_socket]
+                try:
+                    recipient_socket.send(f"(Soukromá zpráva od {sender_nick}): {content}".encode('utf-8'))
+                    client_socket.send(f"(Soukromá zpráva pro {recipient_nick}): {content}".encode('utf-8'))
+                    self._display_log(f"(Soukromá zpráva) {sender_nick} -> {recipient_nick}: {content}")
+                except Exception as e:
+                    self._display_log(f"Chyba při odesílání soukromé zprávy: {e}")
+            else:
+                self._display_log(f"Klient {self.clients[client_socket]} se pokusil poslat soukromou zprávu uživateli '{recipient_nick}', který není online.")
+                client_socket.send("ERROR: Uživatel není online.".encode('utf-8'))
+
+    def _send_message_to_all(self, message):
+        """Odešle zprávu všem připojeným klientům."""
+        if self.debug_enabled.get():
+            self._display_log(f"Odesílám všem: {message}")
+        for client_socket in self.clients:
+            try:
+                client_socket.send(message.encode('utf-8'))
+            except Exception as e:
+                self._display_log(f"Chyba při odesílání zprávy klientovi: {e}")
+
+    def _send_user_list_to_all(self):
+        """Odešle seznam online uživatelů všem připojeným klientům."""
+        users_list = "\n".join(self.nicknames.values())
+        message = f"§{users_list}"
+        if self.debug_enabled.get():
+            self._display_log(f"Odesílám seznam uživatelů všem: {message}")
+        for client_socket in self.clients:
+            try:
+                client_socket.send(message.encode('utf-8'))
+            except Exception as e:
+                self._display_log(f"Chyba při odesílání seznamu uživatelů klientovi: {e}")
+
+    def _remove_client(self, client_socket):
+        """Odstraní klienta ze seznamu připojených klientů."""
+        client_address = self.clients.get(client_socket)
+        if client_address:
+            self._display_log(f"Odpojuji klienta: {client_address}")
+        if client_socket in self.nicknames:
+            nickname = self.nicknames[client_socket]
+            del self.nicknames[client_socket]
+            self._send_user_list_to_all()
+        if client_socket in self.clients:
+            del self.clients[client_socket]
+        try:
+            client_socket.close()
+        except Exception as e:
+            self._display_log(f"Chyba při zavírání soketu klienta: {e}")
+
+    def _on_closing(self):
+        """Obsluha události při zavírání okna serveru."""
+        self._stop_server()
+        self.master.destroy()
+
+    def _toggle_debug(self):
+        """Zapne nebo vypne debug režim."""
+        if self.debug_enabled.get():
+            self._display_log("Debug režim zapnut.")
+        else:
+            self._display_log("Debug režim vypnut.")
+
+    def _set_theme(self, theme):
+        """Nastaví vizuální styl aplikace na základě zvoleného motivu."""
+        if theme == "dark":
+            self.master.config(bg="#212121")
+            self.log_area.config(bg="#2a2a2a", fg="#eeeeee", insertbackground="#ffffff")
+            if hasattr(self, 'ip_label'):
+                self.ip_label.config(fg="#eeeeee")
+            if hasattr(self, 'port_label'):
+                self.port_label.config(fg="#eeeeee")
+            if hasattr(self, 'start_stop_button'):
+                self.start_stop_button.config(bg="#212121", fg="#ffffff", activebackground="#4CAF50", activeforeground="#ffffff")
+            if hasattr(self, 'debug_check'):
+                self.debug_check.config(fg="#eeeeee")
+            if hasattr(self, 'server_frame_label'):
+                self.server_frame_label.config(bg="#2a2a2a", fg="#eeeeee", highlightbackground="#2a2a2a", highlightcolor="#2a2a2a", bd=0)
+            if hasattr(self, 'log_frame_label'):
+                self.log_frame_label.config(bg="#2a2a2a", fg="#eeeeee", highlightbackground="#2a2a2a", highlightcolor="#2a2a2a", bd=0)
+        elif theme == "light":
+            self.master.config(bg="#ffffff")
+            self.log_area.config(bg="#ffffff", fg="#000000", insertbackground="#000000")
+            if hasattr(self, 'ip_label'):
+                self.ip_label.config(fg="#000000")
+            if hasattr(self, 'port_label'):
+                self.port_label.config(fg="#000000")
+            if hasattr(self, 'start_stop_button'):
+                self.start_stop_button.config(bg="#4CAF50", fg="#ffffff", activebackground="#66BB6A", activeforeground="#ffffff")
+            if hasattr(self, 'debug_check'):
+                self.debug_check.config(fg="#000000")
+            if hasattr(self, 'server_frame_label'):
+                self.server_frame_label.config(bg="#f0f0f0", fg="#000000", highlightbackground="#f0f0f0", highlightcolor="#f0f0f0", bd=0)
+            if hasattr(self, 'log_frame_label'):
+                self.log_frame_label.config(bg="#f0f0f0", fg="#000000", highlightbackground="#f0f0f0", highlightcolor="#f0f0f0", bd=0)
+        self.current_theme = theme
+
+    def _on_theme_change(self):
+        selected_theme = self.theme_var.get()
+        self._set_theme(selected_theme)
+        self._save_config()
+
+    def _load_config(self):
+        if os.path.exists(CONFIG_FILE):
+            try:
+                with open(CONFIG_FILE, "r") as f:
+                    config = json.load(f)
+                    self.current_theme = config.get("theme", "light")
+            except (json.JSONDecodeError, KeyError):
+                print("Chyba při načítání konfigurace. Používám výchozí nastavení.")
+                self._save_config()
+
+    def _save_config(self):
+        config = {
+            "theme": self.current_theme,
+        }
+        try:
+            with open(CONFIG_FILE, "w") as f:
+                json.dump(config, f, indent=4)
+        except Exception as e:
+            print(f"Chyba při ukládání konfigurace: {e}")
 
 if __name__ == "__main__":
-    main()
+    root = tk.Tk()
+    server_gui = ChatServerGUI(root)
+    root.mainloop()
